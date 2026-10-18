@@ -170,13 +170,16 @@ func parseFdinfo(path string) (*drmClient, bool) {
 	return c, true
 }
 
-// fdinfoScanner finds DRM clients in /proc. A full scan of every process runs every fullScanEvery;
-// in between only the processes that already had a GPU node open are read again.
+// fdinfoScanner finds DRM clients in /proc. Every sample reads again the processes that had a GPU
+// node open and checks the processes started since the previous sample, so a new GPU process (an
+// ffmpeg transcode) shows up on the next sample. A full scan of every process runs every
+// fullScanEvery, for processes that open a GPU node long after they start.
 type fdinfoScanner struct {
 	procRoot      string
 	fullScanEvery time.Duration
 	lastFullScan  time.Time
 	gpuPIDs       map[string]bool
+	knownPIDs     map[string]bool
 	selfPID       string
 }
 
@@ -185,26 +188,39 @@ func newFdinfoScanner(procRoot string, fullScanEvery time.Duration) *fdinfoScann
 		procRoot:      procRoot,
 		fullScanEvery: fullScanEvery,
 		gpuPIDs:       map[string]bool{},
+		knownPIDs:     map[string]bool{},
 		selfPID:       strconv.Itoa(os.Getpid()),
 	}
 }
 
+func (s *fdinfoScanner) listPIDs() map[string]bool {
+	entries, _ := os.ReadDir(s.procRoot)
+	pids := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		if name := e.Name(); name[0] >= '0' && name[0] <= '9' {
+			pids[name] = true
+		}
+	}
+	return pids
+}
+
 func (s *fdinfoScanner) scan() map[clientKey]*drmClient {
+	running := s.listPIDs()
 	var pids []string
 	if time.Since(s.lastFullScan) >= s.fullScanEvery {
-		entries, _ := os.ReadDir(s.procRoot)
-		for _, e := range entries {
-			if name := e.Name(); name[0] >= '0' && name[0] <= '9' {
-				pids = append(pids, name)
-			}
+		for pid := range running {
+			pids = append(pids, pid)
 		}
 		s.lastFullScan = time.Now()
 		s.gpuPIDs = map[string]bool{}
 	} else {
-		for pid := range s.gpuPIDs {
-			pids = append(pids, pid)
+		for pid := range running {
+			if s.gpuPIDs[pid] || !s.knownPIDs[pid] {
+				pids = append(pids, pid)
+			}
 		}
 	}
+	s.knownPIDs = running
 
 	clients := map[clientKey]*drmClient{}
 	for _, pid := range pids {

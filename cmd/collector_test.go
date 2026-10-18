@@ -264,6 +264,29 @@ func TestCollector(t *testing.T) {
 	}
 }
 
+func TestScannerFindsNewProcessesBetweenFullScans(t *testing.T) {
+	h := newFakeHost(t)
+	h.process(100, "llama-server", xeFdinfo(1, 5000*1024, 0, 0, 1_000_000))
+	h.process(400, "bash")
+	s := newFdinfoScanner(h.proc, time.Hour)
+	if n := len(s.scan()); n != 1 {
+		t.Fatalf("first (full) scan found %d clients, want 1", n)
+	}
+
+	// A transcode starts after the full scan: it must show up on the next sample, not an hour later
+	h.process(500, "ffmpeg", i915Fdinfo(7, 1011*1024, 0))
+	clients := s.scan()
+	if _, ok := clients[clientKey{"0000:14:00.0", "7"}]; !ok || len(clients) != 2 {
+		t.Fatalf("new ffmpeg not found between full scans: %d clients", len(clients))
+	}
+
+	// A process known without a GPU node is only re-read by the full scan
+	h.process(400, "bash", xeFdinfo(9, 1024, 0, 0, 1_000_000))
+	if _, ok := s.scan()[clientKey{"0000:03:00.0", "9"}]; ok {
+		t.Fatal("known non-GPU process was re-read before the full scan")
+	}
+}
+
 func TestBusyPercent(t *testing.T) {
 	if p, ok := busyPercent(engineCounter{10, 100}, engineCounter{60, 200}, time.Second); !ok || p != 50 {
 		t.Errorf("xe = %v %v", p, ok)

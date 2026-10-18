@@ -24,9 +24,11 @@ keeps so existing dashboards keep working.
 | Power | hwmon `energy*_input` (the sensor labelled `card`, else the first one that counts) |
 | Interrupts | `/proc/interrupts` lines naming the card's PCI address (or its driver, when it is the only card on it) |
 
-The `/proc` scan follows only fds that link to `/dev/dri/*`. Processes with a GPU node open are
-re-read every sample; every process is scanned again every `FULL_SCAN_INTERVAL_S`, so a new GPU
-process shows up within that time.
+The `/proc` scan follows only fds that link to `/dev/dri/*`. Every sample re-reads the processes
+with a GPU node open and checks the processes started since the previous sample, so a new GPU
+process (an ffmpeg transcode) shows up on the next sample. Every process is scanned again every
+`FULL_SCAN_INTERVAL_S`, for processes that open a GPU node long after they start. On a TrueNAS host
+with two cards this costs about 0.3% of one core at the default settings.
 
 ## Metrics
 
@@ -64,7 +66,7 @@ Not available without the PMU: engine `sema`/`wait` and IMC bandwidth. Temperatu
 |---|---|---|
 | `PORT` | `8080` | HTTP port of `/metrics` |
 | `REFRESH_PERIOD_MS` | `10000` | sample period |
-| `FULL_SCAN_INTERVAL_S` | `60` | how often every process is scanned for new GPU clients |
+| `FULL_SCAN_INTERVAL_S` | `60` | how often every process, not only new ones, is scanned for GPU clients |
 | `CARDS` | all | comma-separated PCI addresses to monitor |
 | `PROC_ROOT`, `SYSFS_ROOT` | `/proc`, `/sys` | for tests |
 | `DEBUG` | off | log the collection time of every sample |
@@ -77,7 +79,7 @@ so it runs privileged as root. It does not need `/dev/dri`.
 ```yaml
 services:
   intel-gpu-exporter:
-    image: ghcr.io/lfventura/intel-gpu-exporter:1.0.0
+    image: ghcr.io/lfventura/intel-gpu-exporter:1.0.1
     container_name: intel-gpu-exporter
     restart: unless-stopped
     pid: host
