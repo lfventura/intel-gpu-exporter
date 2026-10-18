@@ -74,7 +74,13 @@ Not available without the PMU: engine `sema`/`wait` and IMC bandwidth. Temperatu
 ## Running
 
 The container must see the host's processes (`pid: host`) and read other users' `/proc/<pid>/fd`,
-so it runs privileged as root. It does not need `/dev/dri`.
+so it runs privileged as root. It does not need `/dev/dri`: it reads `/sys` and `/proc` only.
+Without `pid: host` the exporter only sees its own container and reports no per-process data.
+
+### TrueNAS SCALE
+
+Apps → Discover → Custom App → **Install via YAML**, with the content of
+[`truenas-custom-app.yaml`](truenas-custom-app.yaml):
 
 ```yaml
 services:
@@ -90,7 +96,37 @@ services:
       REFRESH_PERIOD_MS: "10000"
 ```
 
-Without `pid: host` the exporter only sees its own container and reports no per-process data.
+To update, change the image tag in the app's YAML. Check it with:
+
+```bash
+curl -s localhost:7071/metrics | grep -E '^igpu_(info|power_gpu|memory_(used|total)_bytes|interrupts)'
+```
+
+On TrueNAS SCALE 25.x (kernel 6.12) this was checked with an Arc Pro B50 (`xe`) and an Arc A310
+(`i915`) in the same host; the exporter used about 0.3% of one core.
+
+## Grafana
+
+Every query filters on `card` to get one panel per GPU. Flux, with the metrics stored in InfluxDB
+by Telegraf (one `_field` per metric, labels as tags):
+
+```flux
+// VRAM per app on one card
+from(bucket: "metrics_prometheus")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r["card"] == "0000:03:00.0")
+  |> filter(fn: (r) => r["_field"] == "igpu_client_memory_resident_bytes" and r["region"] == "vram")
+  |> aggregateWindow(every: v.windowPeriod, fn: mean, createEmpty: false)
+  |> group(columns: ["name"])   // sum the processes of one app
+  |> aggregateWindow(every: v.windowPeriod, fn: sum, createEmpty: false)
+```
+
+PromQL:
+
+```promql
+sum by (name) (igpu_client_memory_resident_bytes{card="0000:03:00.0", region="vram"})
+igpu_memory_used_bytes{region="vram"} / igpu_memory_total_bytes{region="vram"}
+```
 
 ## Building
 

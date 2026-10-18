@@ -1,0 +1,16 @@
+# TrueNAS SCALE: Apps → Discover → Custom App → Install via YAML (name: intel-gpu-exporter)
+services:
+  intel-gpu-exporter:
+    image: ghcr.io/lfventura/intel-gpu-exporter:1.0.1
+    container_name: intel-gpu-exporter
+    restart: unless-stopped
+    # See the host's processes: per-process GPU use comes from /proc/<pid>/fdinfo
+    pid: host
+    # Read /proc/<pid>/fd of processes owned by other users (apps run with their own UIDs)
+    privileged: true
+    ports:
+      - "7071:8080"
+    environment:
+      REFRESH_PERIOD_MS: "10000"
+      # FULL_SCAN_INTERVAL_S: "60"
+      # CARDS: "0000:03:00.0,0000:14:00.0"
